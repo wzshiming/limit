@@ -3,22 +3,40 @@ package limit
 import (
 	"time"
 
+	"sync"
+
 	"github.com/wzshiming/buffer"
+	"github.com/wzshiming/task"
 )
 
 type Limit struct {
-	buf *buffer.Buffer
-	max map[string]uint64
+	buf   *buffer.Buffer
+	max   map[string]uint64
+	reset *task.Task
+	mux   sync.RWMutex
 }
 
-func NewLimit() *Limit {
-	return &Limit{
+func NewLimit(f func() time.Time) *Limit {
+	l := &Limit{
 		buf: buffer.NewBuffer(),
 		max: map[string]uint64{},
 	}
+
+	if f != nil {
+		l.reset = task.NewTask(1)
+		l.reset.AddPeriodic(f, func() {
+			l.mux.Lock()
+			defer l.mux.Unlock()
+			l.buf = buffer.NewBuffer()
+			l.max = map[string]uint64{}
+		})
+	}
+	return l
 }
 
 func (l *Limit) Limit(count uint64, s time.Duration, k ...string) bool {
+	l.mux.RLock()
+	defer l.mux.RUnlock()
 	pass := false
 	ks := []func() (interface{}, time.Time, error){}
 	run := func() (interface{}, time.Time, error) {
